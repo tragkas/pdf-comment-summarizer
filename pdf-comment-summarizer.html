@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PDF Comment Summarizer (TXT Export)</title>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              600: "#2563eb",
+              700: "#1d4ed8",
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- pdf.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+  <script>
+    if (window['pdfjsLib']) {
+      window['pdfjsLib'].GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+    }
+  </script>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center p-6">
+  <div class="w-full max-w-3xl bg-white rounded-2xl shadow-xl border p-8">
+    <!-- Header -->
+    <div class="flex items-center gap-3 mb-6">
+      <div class="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M12 4v16m8-8H4" />
+        </svg>
+      </div>
+      <div>
+        <h1 class="text-2xl font-bold text-gray-800">PDF Comment Summarizer</h1>
+        <p class="text-sm text-gray-500">Extract PDF annotations & export as TXT</p>
+      </div>
+    </div>
+
+    <!-- Dropzone -->
+    <label for="file" id="dropzone"
+      class="cursor-pointer flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 hover:bg-gray-100 transition p-10 text-center">
+      <p class="font-medium">Drag & drop your PDF here</p>
+      <p class="text-xs text-gray-500">or click to choose a file</p>
+      <input id="file" type="file" accept="application/pdf" class="hidden" />
+    </label>
+
+    <!-- File info -->
+    <div id="fileInfo" class="hidden mt-6 bg-gray-50 border rounded-xl p-4 flex items-center justify-between">
+      <div>
+        <p id="fileName" class="font-medium text-gray-800"></p>
+        <p id="fileSize" class="text-xs text-gray-500"></p>
+      </div>
+      <button id="extractBtn"
+        class="px-4 py-2 rounded-lg bg-brand-600 text-white font-medium hover:bg-brand-700 focus:ring-2 focus:ring-blue-300 disabled:opacity-50 transition">
+        Extract comments & download TXT
+      </button>
+    </div>
+
+    <!-- Progress bar -->
+    <div id="progressContainer" class="hidden mt-6">
+      <div class="flex justify-between mb-1">
+        <span class="text-sm font-medium text-gray-700">Exporting…</span>
+        <span id="progressText" class="text-sm font-medium text-gray-700">0%</span>
+      </div>
+      <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+        <div id="progressBar" class="h-3 bg-blue-600 w-0 transition-all duration-100"></div>
+      </div>
+    </div>
+
+    <!-- Preview -->
+    <div id="preview" class="hidden mt-6">
+      <h3 class="text-lg font-semibold mb-2 text-gray-800">Preview (first few items)</h3>
+      <div id="previewList" class="text-sm space-y-2 max-h-56 overflow-auto bg-gray-50 border rounded-xl p-4"></div>
+    </div>
+  </div>
+
+  <script>
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('file');
+    const fileInfo = document.getElementById('fileInfo');
+    const fileNameEl = document.getElementById('fileName');
+    const fileSizeEl = document.getElementById('fileSize');
+    const extractBtn = document.getElementById('extractBtn');
+    const preview = document.getElementById('preview');
+    const previewList = document.getElementById('previewList');
+    const progressContainer = document.getElementById('progressContainer');
+    const progressBar = document.getElementById('progressBar');
+    const progressText = document.getElementById('progressText');
+
+    let currentFile = null;
+
+    // Drag & drop
+    ;['dragenter','dragover'].forEach(evt => {
+      dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.add('ring-2','ring-blue-400'); });
+    });
+    ;['dragleave','drop'].forEach(evt => {
+      dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.remove('ring-2','ring-blue-400'); });
+    });
+    dropzone.addEventListener('drop', e => {
+      const f = e.dataTransfer.files?.[0];
+      if (f?.type === 'application/pdf') setFile(f);
+    });
+
+    fileInput.addEventListener('change', e => {
+      const f = e.target.files?.[0];
+      if (f?.type === 'application/pdf') setFile(f);
+    });
+
+    function setFile(f) {
+      currentFile = f;
+      fileInfo.classList.remove('hidden');
+      fileNameEl.textContent = f.name;
+      fileSizeEl.textContent = `${(f.size/1024/1024).toFixed(2)} MB`;
+      preview.classList.add('hidden');
+      previewList.innerHTML = '';
+    }
+
+    extractBtn.addEventListener('click', async () => {
+      if (!currentFile) return;
+
+      try {
+        extractBtn.disabled = true;
+        extractBtn.textContent = 'Extracting…';
+
+        const arrayBuffer = await currentFile.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
+        const groups = new Map();
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const annotations = await page.getAnnotations();
+          const items = [];
+          annotations.forEach(a => {
+            const text = (a.contents || a.richText || '').toString().trim();
+            if (text) {
+              items.push({
+                author: (a.title || a.author || '').toString().trim(),
+                text,
+                subtype: a.subtype || 'Annotation'
+              });
+            }
+          });
+          if (items.length) groups.set(i, items);
+        }
+
+        if (groups.size === 0) {
+          alert('No comments found.');
+          resetBtn();
+          return;
+        }
+
+        // Preview
+        preview.classList.remove('hidden');
+        previewList.innerHTML = '';
+        let shown = 0;
+        for (const [pageNum, items] of groups) {
+          for (const c of items) {
+            const div = document.createElement('div');
+            div.innerHTML = `<span class="text-gray-400">(p.${pageNum})</span> <span class="font-medium">${escapeHtml(c.author || 'Unknown')}</span>: ${escapeHtml(c.text)}`;
+            previewList.appendChild(div);
+            if (++shown > 12) break;
+          }
+          if (shown > 12) break;
+        }
+
+        // Build TXT content
+        let txt = `Summary of Comments — ${currentFile.name}\n\n`;
+        for (const [pageNum, items] of groups) {
+          txt += `Page ${pageNum}\n---------------------\n`;
+          items.forEach(c => {
+            txt += `${c.author ? c.author + ': ' : ''}${c.text}\n\n`;
+          });
+        }
+
+        // Progress bar (5 sec)
+        progressContainer.classList.remove('hidden');
+        progressBar.style.width = '0%';
+        progressText.textContent = '0%';
+        let elapsed = 0;
+        const interval = setInterval(() => {
+          elapsed += 100;
+          let pct = Math.min(100, Math.round((elapsed / 5000) * 100));
+          progressBar.style.width = `${pct}%`;
+          progressText.textContent = `${pct}%`;
+          if (elapsed >= 5000) {
+            clearInterval(interval);
+            downloadTxt(txt, currentFile.name.replace(/\.pdf$/i, '') + ' — Comment Summary.txt');
+            resetBtn();
+          }
+        }, 100);
+
+      } catch (err) {
+        console.error(err);
+        alert('Error extracting comments.');
+        resetBtn();
+      }
+    });
+
+    function downloadTxt(content, filename) {
+      const blob = new Blob([content], { type: 'text/plain' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = filename;
+      link.click();
+    }
+
+    function resetBtn() {
+      extractBtn.disabled = false;
+      extractBtn.textContent = 'Extract comments & download TXT';
+      progressContainer.classList.add('hidden');
+      progressBar.style.width = '0%';
+      progressText.textContent = '0%';
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/[&<>\"']/g, s => ({ '&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;','\'':'&#39;' }[s]));
+    }
+  </script>
+</body>
+</html>
